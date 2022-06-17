@@ -14,7 +14,7 @@
 # SBATCH --gres=gpu:rtx8000:1
 # SBATCH --gres=gpu:1
 
-modes=("expert" "mixed-lin" "mixed-exp")
+modes=("expert" "mixed-const" "mixed-exp")
 mode=${modes[${SLURM_ARRAY_TASK_ID}]}
 
 singularity exec \

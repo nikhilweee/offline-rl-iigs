@@ -3,6 +3,7 @@ import pyspiel
 import torch
 import logging
 import argparse
+from observation import ObservationBuffer
 from torch import nn, optim
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
@@ -67,13 +68,13 @@ def log_gradients(named_params, writer):
 
 def main(args):
     logger.info(f'Loading Trajectories')
-    with open(f'trajectories-{args.mode}-1M.pkl', 'rb') as f:
-        trajectories = pickle.load(f)
+    load_path = args.traj if args.traj else f'trajectories/traj-{args.mode}-1e+06.csv'
+    trajectories = ObservationBuffer.from_csv(load_path)
     data_loader = DataLoader(trajectories, batch_size=1024, shuffle=True)
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     logger.info(f'Using Device: {device}')
-    writer = SummaryWriter(f'runs/bc/{args.mode}/{args.suffix}')
+    writer = SummaryWriter(f'runs/bc/{args.suffix}')
     model = MLP(input_size=30, output_size=3, device=device)
 
     criterion = nn.CrossEntropyLoss()
@@ -83,7 +84,7 @@ def main(args):
     for epoch in range(20):
         running_loss = 0.0
         for idx, data in enumerate(data_loader):
-            state, _, action = data
+            state, action, _, _, _ = data
             state = state.to(device)
             action = action.to(device)
 
@@ -109,7 +110,8 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--mode', choices=['expert', 'mixed-exp', 'mixed-lin'], required=True)
-    parser.add_argument('--suffix', default='')
+    parser.add_argument('--mode', choices=['expert', 'mixed-exp', 'mixed-const'])
+    parser.add_argument('--traj', default=None)
+    parser.add_argument('--suffix', default='test')
     args = parser.parse_args()
     main(args)
