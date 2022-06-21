@@ -4,6 +4,7 @@ import logging
 import argparse
 import numpy as np
 import pyspiel
+from torch.utils.tensorboard import SummaryWriter
 from crr_utils import DataTree, NestedDict, possible_policies
 from observation import ObservationBuffer
 from open_spiel.python.algorithms import exploitability
@@ -122,6 +123,7 @@ class CRR:
 def main(args):
     logger.info(f'Loading Dataset')
     trajectories = ObservationBuffer.from_csv(args.traj)
+    writer = SummaryWriter(f'runs/crr/{args.suffix}')
     crr = CRR(trajectories)
     for idx, obs in enumerate(trajectories.samples):
         obs_dict = obs.to_dict()
@@ -144,6 +146,7 @@ def main(args):
         crr.policy = next_policy
         game = pyspiel.load_game("leduc_poker", {"players": 2})
         conv = exploitability.exploitability(game, next_policy)
+        writer.add_scalar("conv", conv, idx + 1)
         logger.info(
             f'Observation {idx+1:04d}/{len(trajectories.samples)} Exploitability {conv:.04f}'
         )
@@ -151,7 +154,7 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--traj', required=True)
+    parser.add_argument('--traj', default=None)
     parser.add_argument('--suffix', default='test')
     args = parser.parse_args()
     main(args)

@@ -67,8 +67,7 @@ def log_gradients(named_params, writer):
 
 def main(args):
     logger.info(f'Loading Trajectories')
-    load_path = args.traj if args.traj else f'trajectories/traj-{args.mode}-1e+06.csv'
-    trajectories = ObservationBuffer.from_csv(load_path)
+    trajectories = ObservationBuffer.from_csv(args.traj)
     data_loader = DataLoader(trajectories, batch_size=1024, shuffle=True)
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -77,7 +76,7 @@ def main(args):
     model = MLP(input_size=30, output_size=3, device=device)
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=5e-5)
+    optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
     logger.info(f'Starting Training')
     for epoch in range(args.epochs):
@@ -110,9 +109,9 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--mode', choices=['expert', 'mixed-exp', 'mixed-const'])
     parser.add_argument('--traj', default=None)
     parser.add_argument('--suffix', default='test')
     parser.add_argument('--epochs', type=int, default=20)
+    parser.add_argument('--lr', type=float, default=5e-5)
     args = parser.parse_args()
     main(args)

@@ -5,7 +5,7 @@
 #SBATCH --mem=32GB
 #SBATCH --time=00-03:00:00
 #SBATCH --output="logs/%A_%a_%x.txt"
-#SBATCH --job-name=bc
+#SBATCH --job-name=crr
 #SBATCH --array=0,1,2
 
 # The following options will not be applied
@@ -24,5 +24,5 @@ singularity exec \
     source /ext3/miniconda3/etc/profile.d/conda.sh;
     conda activate mcs;
     cd /home/nv2099/projects/mcs;
-    python -u leduc_bc.py --mode ${mode} --suffix ep_20_lr_5e-5_hdim_256;
+    python -u leduc_crr.py --traj trajectories/traj-${mode}--1e+06.csv --suffix ${mode};
     "
