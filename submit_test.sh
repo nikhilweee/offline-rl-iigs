@@ -5,17 +5,13 @@
 #SBATCH --mem=32GB
 #SBATCH --time=00-03:00:00
 #SBATCH --output="logs/%A_%a_%x.txt"
-#SBATCH --job-name=fp
-#SBATCH --array=0,1,2
+#SBATCH --job-name=test
 
 # The following options will not be applied
 # SBATCH --cpus-per-task=1
 # SBATCH --nodelist="gr*"
 # SBATCH --gres=gpu:rtx8000:1
 # SBATCH --gres=gpu:1
-
-modes=("expert" "mixed-const" "mixed-exp")
-mode=${modes[${SLURM_ARRAY_TASK_ID}]}
 
 singularity exec \
     --overlay /scratch/nv2099/images/overlay-50G-10M.ext3:ro \
@@ -24,5 +20,9 @@ singularity exec \
     source /ext3/miniconda3/etc/profile.d/conda.sh;
     conda activate mcs;
     cd /home/nv2099/projects/mcs;
-    python -u leduc_fp.py --mode ${mode};
+    set -x;
+    python leduc_fp.py --traj traj-test.csv --mode mixed-exp --num_iterations 10 --num_episodes 10_000;
+    python leduc_bc.py --traj traj-test.csv --epochs 1;
+    python leduc_crr.py --traj traj-test.csv;
+    set +x;
     "

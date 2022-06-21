@@ -1,3 +1,9 @@
 runs/
+logs/
+archives/
+d3rlpy_logs/
+__pycache__/
+.ipynb_checkpoints/
+.vscode/
 *.csv
 *.pkl

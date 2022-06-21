@@ -1,4 +1,3 @@
-import pickle
 import pyspiel
 import torch
 import logging
@@ -81,10 +80,10 @@ def main(args):
     optimizer = optim.Adam(model.parameters(), lr=5e-5)
 
     logger.info(f'Starting Training')
-    for epoch in range(20):
+    for epoch in range(args.epochs):
         running_loss = 0.0
-        for idx, data in enumerate(data_loader):
-            state, action, _, _, _ = data
+        for idx, batch in enumerate(data_loader):
+            state, action, _, _, _ = batch
             state = state.to(device)
             action = action.to(device)
 
@@ -98,8 +97,8 @@ def main(args):
             optimizer.step()
             running_loss += loss.item()
 
-            if (idx + 1) % 100 == 0:
-                avg_running_loss = running_loss / 100
+            if (idx + 1) % (len(data_loader) // 50) == 0:
+                avg_running_loss = running_loss / (len(data_loader) // 50)
                 writer.add_scalar("loss", avg_running_loss, writer.step)
                 game = pyspiel.load_game("leduc_poker", {"players": 2})
                 conv = exploitability.exploitability(game, model)
@@ -108,10 +107,12 @@ def main(args):
                 running_loss = 0.0
 
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--mode', choices=['expert', 'mixed-exp', 'mixed-const'])
     parser.add_argument('--traj', default=None)
     parser.add_argument('--suffix', default='test')
+    parser.add_argument('--epochs', type=int, default=20)
     args = parser.parse_args()
     main(args)

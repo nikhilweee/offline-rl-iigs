@@ -14,9 +14,9 @@ class Observation:
     def to_dict(self):
         return {
             'info_state': ''.join([str(int(x)) for x in self.info_state]), 
-            'action': str(self.action),
+            'action': int(self.action),
             'action_mask': ''.join([str(int(x)) for x in self.action_mask]),
-            'reward': str(self.reward),
+            'reward': float(self.reward),
             'next_info_state': ''.join([str(int(x)) for x in self.next_info_state])
         }
 
