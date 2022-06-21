@@ -33,13 +33,9 @@ class Policy:
             return probs
         prob_sum = 0
         for idx, mask in enumerate(action_mask):
-            if idx in probs.keys():
-                if mask == '0':
-                    del probs[idx]
-                else:
-                    prob_sum += probs[idx]
-        if prob_sum == 0:
-            prob_sum += 1e-10
+            if mask == '0' or idx not in probs:
+                probs[idx] = 0
+            prob_sum += probs[idx]
         for action in probs.keys():
             probs[action] /= prob_sum
         return probs
@@ -50,7 +46,6 @@ class Policy:
         info_state = ''.join([str(int(x)) for x in info_state])
         legal_mask = ''.join([str(int(x)) for x in legal_mask])
         probs = self(info_state, legal_mask)
-        assert sum(list(probs.values())) - 1 < 1e-10
         return probs
 
 
@@ -150,7 +145,7 @@ def main(args):
         game = pyspiel.load_game("leduc_poker", {"players": 2})
         conv = exploitability.exploitability(game, next_policy)
         logger.info(
-            f'Observation {idx+1:04d}/{len(trajectories.samples)} Exploitability {conv}'
+            f'Observation {idx+1:04d}/{len(trajectories.samples)} Exploitability {conv:.04f}'
         )
 
 
