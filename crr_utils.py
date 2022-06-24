@@ -1,7 +1,7 @@
 import numpy as np
 
 def simplex_3d():
-    range = np.linspace(0, 1, 20)
+    range = np.arange(0, 1, 0.01)
     m = np.stack(
         np.meshgrid(range, range), -1
     ).reshape(-1, 2)
@@ -15,14 +15,8 @@ def possible_policies(action_mask):
     for idx in range(3):
         if action_mask[idx] == '0':
             simplex = simplex[simplex[:, idx] == 0]
-    policies = []
-    for probs in simplex:
-        policy = {}
-        for idx in range(3):
-            if probs[idx] > 0:
-                policy[idx] = probs[idx]
-        policies.append(policy)
-    return policies
+    simplex[simplex == 0] = 1e-10
+    return simplex
 
 class DataNode:
     def __init__(self):

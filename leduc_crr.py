@@ -61,6 +61,7 @@ class CRR:
         self.calculate_counts(trajectories)
 
     def calculate_counts(self, trajectories):
+        logger.info(f"Updating counts for {len(trajectories.samples)} samples")
         for obs in trajectories.samples:
             self.tree.add_obs(obs.to_dict())
 
@@ -86,6 +87,9 @@ class CRR:
                 next_state].count / self.tree[state][action].count
         assert sum(probs.values()) - 1 < 1e-10
         return probs
+
+    def state_prob(self, state):
+        return self.tree[state].count / self.tree.count
 
     def qvalue(self, policy, state, action):
         term_state = '000000000000000000000000000000'
@@ -129,27 +133,25 @@ def main(args):
         obs_dict = obs.to_dict()
         state = obs_dict['info_state']
         action_mask = obs_dict['action_mask']
-        expectations = {}
-        for action_probs in possible_policies(action_mask):
-            policy = Policy(crr.policy)
-            policy.update(state, action_probs)
-            crr.reset_qdict()
-            expectation = 0
-            for action in action_probs.keys():
-                if crr.qvalue(policy, state, action) >= crr.vvalue(
-                        policy, state):
-                    expectation += crr.empirical_policy(
-                        state)[action] * np.log(action_probs[action])
-            expectations[policy] = expectation
-        next_policy = max(expectations,
-                          key=lambda policy: expectations[policy])
-        crr.policy = next_policy
-        game = pyspiel.load_game("leduc_poker", {"players": 2})
-        conv = exploitability.exploitability(game, next_policy)
-        writer.add_scalar("conv", conv, idx + 1)
-        logger.info(
-            f'Observation {idx+1:04d}/{len(trajectories.samples)} Exploitability {conv:.04f}'
-        )
+        indicators = np.zeros(3)
+        for action in range(3):
+            if crr.qvalue(crr.policy, state, action) >= crr.vvalue(crr.policy, state):
+                indicators[action] = crr.empirical_policy(state)[action]
+        policies = possible_policies(action_mask)
+        log_policies = np.log(policies)
+        square = indicators * log_policies
+        argmax = square.sum(axis=-1).argmax()
+        probs = policies[argmax]
+        probs = {num: probs[num] for num in range(3)}
+        crr.policy.update(state, probs)
+        if (idx + 1) % 1000 == 0 or (idx + 1) == len(trajectories.samples):
+            game = pyspiel.load_game("leduc_poker", {"players": 2})
+            conv = exploitability.exploitability(game, crr.policy)
+            writer.add_scalar("conv", conv, idx + 1)
+            logger.info(
+                f'Observation {idx+1:05d}/{len(trajectories.samples)} '
+                f'Exploitability {conv:.04f}'
+            )
 
 
 if __name__ == "__main__":
