@@ -120,16 +120,17 @@ class CRR:
         self.vdict[state] = vvalue
         return self.vdict[state]
 
-    def reset_qdict(self):
+    def reset_qvdict(self):
         self.qdict = NestedDict()
+        self.vdict = NestedDict()
 
 
 def main(args):
-    logger.info(f'Loading Dataset')
+    logger.info(f'Reading dataset')
     trajectories = ObservationBuffer.from_csv(args.traj)
     writer = SummaryWriter(f'runs/crr/{args.suffix}')
     crr = CRR(trajectories)
-    for idx, obs in enumerate(trajectories.samples):
+    for idx, obs in enumerate(trajectories.samples[:100_000]):
         obs_dict = obs.to_dict()
         state = obs_dict['info_state']
         action_mask = obs_dict['action_mask']
@@ -144,7 +145,8 @@ def main(args):
         probs = policies[argmax]
         probs = {num: probs[num] for num in range(3)}
         crr.policy.update(state, probs)
-        if (idx + 1) % 1000 == 0 or (idx + 1) == len(trajectories.samples):
+        crr.reset_qvdict()
+        if (idx + 1) % 100 == 0 or (idx + 1) == len(trajectories.samples):
             game = pyspiel.load_game("leduc_poker", {"players": 2})
             conv = exploitability.exploitability(game, crr.policy)
             writer.add_scalar("conv", conv, idx + 1)
