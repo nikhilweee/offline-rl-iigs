@@ -5,7 +5,7 @@ import argparse
 import numpy as np
 import pyspiel
 from torch.utils.tensorboard import SummaryWriter
-from crr_utils import DataTree, NestedDict, possible_policies
+from crr_utils import DataTree, NestedDict
 from observation import ObservationBuffer
 from open_spiel.python.algorithms import exploitability
 
@@ -24,12 +24,13 @@ class Policy:
         if state not in self.pdict:
             self.pdict[state] = self.sp(state)
         probs = self.pdict[state]
-        return self.reweight_actions(probs, action_mask)
+        assert np.allclose(sum(probs.values()), 1)
+        return self.reweight_actions(state, probs, action_mask)
 
     def update(self, state, probs):
         self.pdict[state] = probs
 
-    def reweight_actions(self, probs, action_mask):
+    def reweight_actions(self, state, probs, action_mask):
         if not action_mask:
             return probs
         prob_sum = 0
@@ -39,6 +40,7 @@ class Policy:
             prob_sum += probs[idx]
         for action in probs.keys():
             probs[action] /= prob_sum
+        assert np.allclose(sum(probs.values()), 1)
         return probs
 
     def action_probabilities(self, game_state):
@@ -72,7 +74,7 @@ class CRR:
         for action in self.tree[state]:
             probs[action] = self.tree[state][action].count / self.tree[
                 state].count
-        assert sum(probs.values()) - 1 < 1e-10
+        assert np.allclose(sum(probs.values()), 1)
         return probs
 
     def empirical_transition(self, state, action):
@@ -85,7 +87,7 @@ class CRR:
         for next_state in self.tree[state][action]:
             probs[next_state] = self.tree[state][action][
                 next_state].count / self.tree[state][action].count
-        assert sum(probs.values()) - 1 < 1e-10
+        assert np.allclose(sum(probs.values()), 1)
         return probs
 
     def state_prob(self, state):
@@ -127,38 +129,66 @@ class CRR:
 
 def main(args):
     logger.info(f'Reading dataset')
-    trajectories = ObservationBuffer.from_csv(args.traj)
-    writer = SummaryWriter(f'runs/crr/{args.suffix}')
+    trajectories = ObservationBuffer.from_csv(args.traj, limit=1_000_000)
+    writer = SummaryWriter(f'runs/crr/{args.mode}/{args.suffix}')
     crr = CRR(trajectories)
-    for idx, obs in enumerate(trajectories.samples[:100_000]):
+    # Filter unique states
+    visited_states = []
+    unique_samples = []
+    for obs in trajectories.samples:
         obs_dict = obs.to_dict()
         state = obs_dict['info_state']
-        action_mask = obs_dict['action_mask']
-        indicators = np.zeros(3)
-        for action in range(3):
-            if crr.qvalue(crr.policy, state, action) >= crr.vvalue(crr.policy, state):
-                indicators[action] = crr.empirical_policy(state)[action]
-        policies = possible_policies(action_mask)
-        log_policies = np.log(policies)
-        square = indicators * log_policies
-        argmax = square.sum(axis=-1).argmax()
-        probs = policies[argmax]
-        probs = {num: probs[num] for num in range(3)}
-        crr.policy.update(state, probs)
-        crr.reset_qvdict()
-        if (idx + 1) % 100 == 0 or (idx + 1) == len(trajectories.samples):
-            game = pyspiel.load_game("leduc_poker", {"players": 2})
-            conv = exploitability.exploitability(game, crr.policy)
-            writer.add_scalar("conv", conv, idx + 1)
-            logger.info(
-                f'Observation {idx+1:05d}/{len(trajectories.samples)} '
-                f'Exploitability {conv:.04f}'
-            )
+        if state in visited_states:
+            continue
+        visited_states.append(state)
+        unique_samples.append(obs)
+    # Start running
+    logger.info(f'Starting training')
+    for epoch in range(args.epochs):
+        for idx, obs in enumerate(unique_samples):
+            obs_dict = obs.to_dict()
+            state = obs_dict['info_state']
+            action_mask = obs_dict['action_mask']
+            indicators = np.zeros(3)
+            # Calculate indicator values for actions
+            for action in range(3):
+                if args.mode == 'bin':
+                    if crr.qvalue(crr.policy, state, action) >= crr.vvalue(crr.policy, state):
+                        indicators[action] = crr.empirical_policy(state)[action]
+                if args.mode == 'exp':
+                    indicators[action] = crr.qvalue(crr.policy, state, action) - crr.vvalue(crr.policy, state)
+                    # Beta is 1 for now. Z is the normalization constant.
+                    indicators[action] = np.exp(indicators[action] / 1) * crr.empirical_policy(state)[action]
+            if args.mode == 'bin':
+                argsort = indicators.argsort()
+                while action_mask[argsort[-1]] == '0':
+                    argsort = argsort[:-1]
+                probs = {action: 0.0 for action in range(3)}
+                probs[argsort[-1]] = 1
+            if args.mode == 'exp':
+                indicators = indicators / np.sum(indicators)
+                probs = {action: indicators[action] for action in range(3)}
+            # Update policy, reset Q and V dicts
+            crr.policy.update(state, probs)
+            crr.reset_qvdict()
+            # Store summary
+            if (idx + 1) % 100 == 0 or (idx + 1) == len(unique_samples):
+                game = pyspiel.load_game("leduc_poker", {"players": 2})
+                conv = exploitability.exploitability(game, crr.policy)
+                writer.step = epoch * len(unique_samples) + (idx + 1)
+                writer.add_scalar("conv", conv, writer.step)
+                logger.info(
+                    f'Ep: {epoch+1:2d} '
+                    f'Obs: {idx+1:6d}/{len(unique_samples)} '
+                    f'Exp: {conv:.04f}'
+                )
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--traj', default=None)
     parser.add_argument('--suffix', default='test')
+    parser.add_argument('--epochs', type=int, default=10)
+    parser.add_argument('--mode', choices=['bin', 'exp'], required=True)
     args = parser.parse_args()
     main(args)

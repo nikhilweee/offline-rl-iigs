@@ -68,11 +68,13 @@ class ObservationBuffer:
                 writer.writerow(obs.to_dict())
 
     @staticmethod
-    def from_csv(path):
+    def from_csv(path, limit=None):
         buffer = ObservationBuffer()
         with open(path, 'r') as f:
             reader = csv.DictReader(f)
-            for obs_dict in reader:
+            for idx, obs_dict in enumerate(reader):
                 obs = Observation.from_dict(obs_dict)
                 buffer.append(obs)
+                if limit is not None and (idx + 1) == limit:
+                        break
         return buffer
