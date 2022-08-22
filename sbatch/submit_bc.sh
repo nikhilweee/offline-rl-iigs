@@ -24,5 +24,5 @@ singularity exec \
     source /ext3/miniconda3/etc/profile.d/conda.sh;
     conda activate mcs;
     cd /home/nv2099/projects/mcs;
-    python -u leduc_bc.py --traj trajectories/traj-${mode}--1e+06.csv --suffix ${mode}/ep_20_lr_5e-5;
+    python -u leduc_bc.py --traj trajectories/traj-${mode}--1e+06.csv --label ${mode}/ep_20_lr_5e-5;
     "

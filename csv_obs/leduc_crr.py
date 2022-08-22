@@ -9,9 +9,14 @@ from crr_utils import DataTree, NestedDict
 from observation import ObservationBuffer
 from open_spiel.python.algorithms import exploitability
 
-logging.basicConfig(format="%(asctime)s [%(levelname).1s]: %(message)s",
-                    level=logging.INFO)
-logger = logging.getLogger(__name__)
+logging.basicConfig(
+    format=('%(asctime)s.%(msecs)03d %(levelname)s '
+            '%(module)s L%(lineno)d | %(message)s'),
+    datefmt='%Y-%m-%d %H:%M:%S',
+    level=logging.INFO,
+    force=True,
+)
+logger = logging.getLogger(__file__)
 
 
 class Policy:
@@ -129,8 +134,8 @@ class CRR:
 
 def main(args):
     logger.info(f'Reading dataset')
-    trajectories = ObservationBuffer.from_csv(args.traj, limit=1_000_000)
-    writer = SummaryWriter(f'runs/crr/{args.mode}/{args.suffix}')
+    trajectories = ObservationBuffer.from_csv(args.traj, limit=100_000)
+    writer = SummaryWriter(f'runs/crr/{args.mode}/{args.label}')
     crr = CRR(trajectories)
     # Filter unique states
     visited_states = []
@@ -157,7 +162,7 @@ def main(args):
                         indicators[action] = crr.empirical_policy(state)[action]
                 if args.mode == 'exp':
                     indicators[action] = crr.qvalue(crr.policy, state, action) - crr.vvalue(crr.policy, state)
-                    # Beta is 1 for now. Z is the normalization constant.
+                    # Beta is 1 for now. Z is the normalization constant
                     indicators[action] = np.exp(indicators[action] / 1) * crr.empirical_policy(state)[action]
             if args.mode == 'bin':
                 argsort = indicators.argsort()
@@ -170,12 +175,15 @@ def main(args):
                 probs = {action: indicators[action] for action in range(3)}
             # Update policy, reset Q and V dicts
             crr.policy.update(state, probs)
-            crr.reset_qvdict()
+
+            # Reset QVDicts after each update
+            # crr.reset_qvdict()
+
             # Store summary
-            if (idx + 1) % 100 == 0 or (idx + 1) == len(unique_samples):
+            if (idx) % 100 == 0 or (idx + 1) == len(unique_samples):
                 game = pyspiel.load_game("leduc_poker", {"players": 2})
                 conv = exploitability.exploitability(game, crr.policy)
-                writer.step = epoch * len(unique_samples) + (idx + 1)
+                writer.step = (epoch + ((idx + 1) / len(unique_samples))) * 1000
                 writer.add_scalar("conv", conv, writer.step)
                 logger.info(
                     f'Ep: {epoch+1:2d} '
@@ -183,11 +191,15 @@ def main(args):
                     f'Exp: {conv:.04f}'
                 )
 
+        # Reset QVDicts after each epoch
+        crr.reset_qvdict()
+
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--traj', default=None)
-    parser.add_argument('--suffix', default='test')
+    parser.add_argument('--label', default='test')
     parser.add_argument('--epochs', type=int, default=10)
     parser.add_argument('--mode', choices=['bin', 'exp'], required=True)
     args = parser.parse_args()

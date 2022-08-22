@@ -30,7 +30,8 @@ class Observation:
         ]
     
     def __repr__(self):
-        return " ".join(self.to_dict().values())
+        str_list = [str(value) for value in self.to_dict().values()]
+        return " ".join(str_list)
 
     @staticmethod
     def from_dict(obs_dict):

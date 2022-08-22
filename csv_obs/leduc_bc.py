@@ -72,7 +72,7 @@ def main(args):
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     logger.info(f'Using Device: {device}')
-    writer = SummaryWriter(f'runs/bc/{args.suffix}')
+    writer = SummaryWriter(f'runs/bc/{args.label}')
     model = MLP(input_size=30, output_size=3, device=device)
 
     criterion = nn.CrossEntropyLoss()
@@ -110,7 +110,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--traj', default=None)
-    parser.add_argument('--suffix', default='test')
+    parser.add_argument('--label', default='test')
     parser.add_argument('--epochs', type=int, default=20)
     parser.add_argument('--lr', type=float, default=5e-5)
     args = parser.parse_args()
