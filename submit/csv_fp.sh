@@ -23,6 +23,6 @@ singularity exec \
     /bin/bash -c "
     source /ext3/miniconda3/etc/profile.d/conda.sh;
     conda activate mcs;
-    cd /home/nv2099/projects/mcs;
+    cd /home/nv2099/projects/mcs/csv_obs;
     python -u leduc_fp.py --mode ${mode};
     "

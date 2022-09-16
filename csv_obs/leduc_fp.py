@@ -101,7 +101,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--mode', choices=['expert', 'mixed-const', 'mixed-exp'], required=True)
     parser.add_argument('--traj', default=None)
-    parser.add_argument('--num_episodes', type=int, default=1_000_000)
+    parser.add_argument('--num_episodes', type=int, default=10_000)
     parser.add_argument('--num_iterations', type=int, default=1_000)
     args = parser.parse_args()
     main(args)
