@@ -1,11 +1,16 @@
 """
-Run CFR on an offline dataset.
+Build on Offline CFR and introduce a value function for unexplored nodes.
 """
+
 
 import argparse
 import logging
 import pickle
 import pyspiel
+import torch
+from torch import nn, optim
+from torch.utils.data import DataLoader
+
 
 import numpy as np
 
@@ -168,6 +173,11 @@ class OfflineHybridPolicy(policy.TabularPolicy):
 
 class OfflineCFRSolver(cfr.CFRSolver):
     def __init__(self, game, trajs):
+        self.mode = "train"
+        self.dataset = []
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.network = MLP(input_size=30, output_size=1, hidden_size=256, device=device)
+
         self._game = game
         self._num_players = game.num_players()
         self._root_node = self._game.new_initial_state()
@@ -308,11 +318,12 @@ class OfflineCFRSolver(cfr.CFRSolver):
 
         self.missing_state_count = 0
         self.found_state_count = 0
-        # self._reset_action_probs(self._root_node)
+        self._reset_action_probs(self._root_node)
 
-        logger.info(f"Loaded {len(self.action_probs)} non-terminal states from the dataset.")
+        logger.info(
+            f"Loaded {len(self.action_probs)} non-terminal states from the dataset."
+        )
 
-        # This state_dict does not include terminal states
         return state_dict, action_dict
 
     def _compute_counterfactual_regret_for_player(
@@ -346,7 +357,7 @@ class OfflineCFRSolver(cfr.CFRSolver):
                         new_state, policies, new_reach_probabilities, player
                     )
                 )
-            return state_value
+            return self._train_value_network(state, state_value)
 
         current_player = state.current_player()
         info_state = state.information_state_string(current_player)
@@ -391,7 +402,7 @@ class OfflineCFRSolver(cfr.CFRSolver):
 
         simulatenous_updates = player is None
         if not simulatenous_updates and current_player != player:
-            return state_value
+            return self._train_value_network(state, state_value)
 
         reach_prob = reach_probabilities[current_player]
         counterfactual_reach_prob = np.prod(
@@ -425,7 +436,90 @@ class OfflineCFRSolver(cfr.CFRSolver):
                     reach_prob * action_prob
                 )
 
-        return state_value
+        return self._train_value_network(state, state_value)
+
+    def _train_value_network(self, state, value):
+        if self.mode == "train" and len(state.history()) > 3:
+            key = torch.tensor(state.information_state_string())
+            self.dataset.append((key, value))
+        if self.mode == "eval":
+            key = torch.tensor(state.information_state_string())
+            value = self.network(key)
+        return value
+
+
+class MLP(nn.Module):
+    def __init__(
+        self, input_size=30, output_size=3, hidden_size=256, device="cpu"
+    ):
+        super().__init__()
+        logger.info(f"Using Device: {device}")
+        self.device = device
+        self.linear1 = nn.Linear(input_size, hidden_size)
+        self.relu1 = nn.ReLU()
+        self.linear2 = nn.Linear(hidden_size, hidden_size)
+        self.relu2 = nn.ReLU()
+        self.linear3 = nn.Linear(hidden_size, output_size)
+        self.to(device)
+
+    def forward(self, state):
+        out = self.linear1(state)
+        out = self.relu1(out)
+        out = self.linear2(out)
+        out = self.relu2(out)
+        out = self.linear3(out)
+        return out
+
+    def action_probabilities(self, state):
+        info_state = state.information_state_tensor()
+        legal_mask = state.legal_actions_mask()
+        info_state = torch.tensor(info_state, device=self.device)
+        legal_mask = torch.tensor(legal_mask, device=self.device)
+        illegal_mask = (1 - legal_mask).bool()
+        out = self(info_state)
+        out = out.masked_fill(illegal_mask, -float("inf"))
+        out = nn.functional.softmax(out, dim=-1)
+        probs = {idx: prob for idx, prob in enumerate(out) if prob.isfinite()}
+        return probs
+
+    def train(self, dataset):
+
+        data_loader = DataLoader(dataset, batch_size=1024 * 100, shuffle=True)
+
+        criterion = nn.CrossEntropyLoss()
+        optimizer = optim.Adam(self.parameters(), lr=1e-5)
+
+        logger.info(f"Starting Training")
+        for epoch in range(args.epochs):
+            running_loss = 0.0
+            for idx, batch in enumerate(data_loader):
+                state, value = batch
+                state = state.to(self.device)
+                value = value.to(self.device)
+
+                pred = self(state)
+                loss = criterion(pred, value)
+                loss.backward()
+
+                writer.step = epoch * len(data_loader) + (idx + 1)
+                # log_gradients(model.named_parameters(), writer)
+
+                optimizer.step()
+                running_loss += loss.item()
+                if len(data_loader) >= 100:
+                    print_interval = len(data_loader) // 50
+                else:
+                    print_interval = 1
+                if (idx + 1) % print_interval == 0:
+                    avg_running_loss = running_loss / print_interval
+                    writer.add_scalar("loss", avg_running_loss, writer.step)
+                    game = pyspiel.load_game("leduc_poker", {"players": 2})
+                    conv = exploitability.exploitability(game, model)
+                    writer.add_scalar("conv", conv, writer.step)
+                    logger.info(
+                        f"epoch: {epoch + 1:02d} batch: {idx + 1:03d} loss: {avg_running_loss:.04f} conv: {conv:.04f}"
+                    )
+                    running_loss = 0.0
 
 
 def main(args):
@@ -440,11 +534,14 @@ def main(args):
 
     for i in range(args.iterations + 1):
         if i % args.print_freq == 0:
+            cfr_solver.mode == "eval"
+            cfr_solver.evaluate_and_update_policy()
             conv = exploitability.exploitability(
                 game, cfr_solver.average_policy()
             )
             logger.info(f"Iteration {i} Exploitability {conv}")
             writer.add_scalar("conv", conv, i)
+            cfr_solver.mode == "train"
         cfr_solver.evaluate_and_update_policy()
 
 

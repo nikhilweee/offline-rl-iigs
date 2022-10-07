@@ -1,3 +1,7 @@
+"""
+Run BC on an offline dataset for Leduc Poker.
+"""
+
 import pyspiel
 import torch
 import pickle
@@ -83,7 +87,7 @@ def main(args):
     dataset = load_dataset(args.traj)
     logger.info(f"Loaded dataset : {args.traj}")
 
-    data_loader = DataLoader(dataset, batch_size=1024 * 100, shuffle=True)
+    data_loader = DataLoader(dataset, batch_size=1024, shuffle=True)
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     logger.info(f'Using Device: {device}')
