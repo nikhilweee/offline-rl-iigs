@@ -1,9 +1,14 @@
 runs/
 logs/
-archives/
+archive/
+oef/
+open_spiel
+ray
 d3rlpy_logs/
 __pycache__/
 .ipynb_checkpoints/
 .vscode/
 *.csv
 *.pkl
+*.pyc
+LOG.md

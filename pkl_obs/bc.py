@@ -19,23 +19,24 @@ logger = logging.getLogger(__name__)
 
 class MLP(nn.Module):
 
-    def __init__(self, input_size=30, output_size=3, hidden_size=256, device='cpu'):
+    def __init__(self, input_size=30, output_size=3, hidden_size=1024, device='cpu'):
         super().__init__()
         self.device = device
-        self.linear1 = nn.Linear(input_size, hidden_size)
-        self.relu1 = nn.ReLU()
-        self.linear2 = nn.Linear(hidden_size, hidden_size)
-        self.relu2 = nn.ReLU()
-        self.linear3 = nn.Linear(hidden_size, output_size)
+        self.layers = nn.Sequential(
+            nn.Linear(input_size, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, output_size)
+        )
         self.to(device)
     
     def forward(self, state):
-        out = self.linear1(state)
-        out = self.relu1(out)
-        out = self.linear2(out)
-        out = self.relu2(out)
-        out = self.linear3(out)
-        return out
+        return self.layers(state)
     
     def action_probabilities(self, state):
         info_state = state.information_state_tensor()
@@ -46,27 +47,9 @@ class MLP(nn.Module):
         out =  self(info_state)
         out = out.masked_fill(illegal_mask, -float('inf'))
         out = nn.functional.softmax(out, dim=-1)
-        probs = {idx: prob for idx, prob in enumerate(out) if prob.isfinite()}
+        probs = {idx: prob.item() for idx, prob in enumerate(out) if prob.isfinite()}
         return probs
 
-
-def log_gradients(named_params, writer):
-    learnable = {name: param.grad.detach().norm()
-        for name, param in named_params if param.grad is not None}
-    
-    def filter_norm(query=None):
-        if query is not None:
-            results = [value for key, value in learnable.items() if query in key]
-        else:
-            results = list(learnable.values())
-        if not results:
-            results = [torch.tensor(0.0)]
-        return torch.norm(torch.stack(results))
-
-    writer.add_scalar('grad_norm/all', filter_norm(), writer.step)
-    writer.add_scalar('grad_norm/linear1', filter_norm('linear1'), writer.step)
-    writer.add_scalar('grad_norm/linear2', filter_norm('linear2'), writer.step)
-    writer.add_scalar('grad_norm/linear3', filter_norm('linear3'), writer.step)
 
 def load_dataset(traj_path):
     dataset = []
@@ -87,7 +70,7 @@ def main(args):
     dataset = load_dataset(args.traj)
     logger.info(f"Loaded dataset : {args.traj}")
 
-    data_loader = DataLoader(dataset, batch_size=1024, shuffle=True)
+    data_loader = DataLoader(dataset, batch_size=10240, shuffle=True)
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     logger.info(f'Using Device: {device}')
@@ -110,7 +93,6 @@ def main(args):
             loss.backward()
 
             writer.step = epoch * len(data_loader) + (idx + 1)
-            # log_gradients(model.named_parameters(), writer)
 
             optimizer.step()
             running_loss += loss.item()

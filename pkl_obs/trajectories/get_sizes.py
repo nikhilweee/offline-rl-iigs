@@ -31,6 +31,6 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--traj", required=True)
+    parser.add_argument("traj", help="path to trajectory pkl file")
     args = parser.parse_args()
     main(args)

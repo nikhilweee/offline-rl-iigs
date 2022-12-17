@@ -3,9 +3,9 @@
 # Add -x to print before executing
 
 #SBATCH --mem=32GB
-#SBATCH --time=02-00:00:00
+#SBATCH --time=00-12:00:00
 #SBATCH --output="logs/%A_%a_%x.txt"
-#SBATCH --job-name=bc
+#SBATCH --job-name=pkl_bc
 #SBATCH --array=0,1,2,3
 
 # The following options will not be applied
@@ -14,8 +14,8 @@
 # SBATCH --gres=gpu:rtx8000:1
 # SBATCH --gres=gpu:1
 
-trajs=("936-4609-40157" "936-8838-40520" "936-9249-79840" "936-9457-82042")
-traj=${trajs[${SLURM_ARRAY_TASK_ID}]}
+nums=("100" "50" "25" "10")
+num=${nums[${SLURM_ARRAY_TASK_ID}]}
 
 singularity exec \
     --overlay /scratch/nv2099/images/overlay-50G-10M.ext3:ro \
@@ -24,5 +24,5 @@ singularity exec \
     source /ext3/miniconda3/etc/profile.d/conda.sh;
     conda activate mcs;
     cd /home/nv2099/projects/mcs/pkl_obs;
-    python -u leduc_bc_offline.py --traj trajectories/traj-mixed-${traj}.pkl --label ${traj}/ep-100k-lr-1e5;
+    python -u leduc_bc.py --traj trajectories/traj-${num}-*.pkl --label ${num}/h1024_l5;
     "

@@ -26,7 +26,7 @@ logging.basicConfig(
 logger = logging.getLogger(__file__)
 
 
-class OfflineEmpiricalPolicy(policy.TabularPolicy):
+class EmpiricalPolicy(policy.TabularPolicy):
     def __init__(self, game, players=None, states=None, actions=None):
         """Initializes an empirical policy for all players in the game."""
         players = sorted(players or range(game.num_players()))
@@ -94,7 +94,7 @@ class OfflineEmpiricalPolicy(policy.TabularPolicy):
         )
 
 
-class OfflineHybridPolicy(policy.TabularPolicy):
+class UniformPolicy(policy.TabularPolicy):
     def __init__(self, parent_policy):
         """Initializes a hybrid policy for all players in the game."""
 
@@ -173,10 +173,10 @@ class OfflineCFRSolver(cfr.CFRSolver):
         self._root_node = self._game.new_initial_state()
 
         states, actions = self._process_trajs(trajs)
-        self._current_policy = OfflineEmpiricalPolicy(
+        self._current_policy = EmpiricalPolicy(
             game, states=states, actions=actions
         )
-        self._average_policy = OfflineHybridPolicy(self._current_policy)
+        self._average_policy = UniformPolicy(self._current_policy)
 
         # Make a dict of ALL info state nodes.
         # Each info state has a list of legal actions
@@ -310,7 +310,9 @@ class OfflineCFRSolver(cfr.CFRSolver):
         self.found_state_count = 0
         # self._reset_action_probs(self._root_node)
 
-        logger.info(f"Loaded {len(self.action_probs)} non-terminal states from the dataset.")
+        logger.info(
+            f"Loaded {len(self.action_probs)} non-terminal states from the dataset."
+        )
 
         # This state_dict does not include terminal states
         return state_dict, action_dict
@@ -325,6 +327,8 @@ class OfflineCFRSolver(cfr.CFRSolver):
         state_key = str(state.history())
 
         if state.is_chance_node():
+
+            # the default value for unexplored nodes is zero
             state_value = 0.0
 
             # all_actions, _ = zip(*state.chance_outcomes())
@@ -355,6 +359,7 @@ class OfflineCFRSolver(cfr.CFRSolver):
         if all(reach_probabilities[:-1] == 0):
             return np.zeros(self._num_players)
 
+        # again, default for unexplored nodes is zero
         state_value = np.zeros(self._num_players)
 
         # Commentes stripped for brevity
@@ -436,7 +441,7 @@ def main(args):
 
     game = pyspiel.load_game("leduc_poker", {"players": 2})
     cfr_solver = OfflineCFRSolver(game, trajs)
-    writer = SummaryWriter(f"runs/cfr/{args.label}")
+    writer = SummaryWriter(f"runs/cfr_offline/{args.label}")
 
     for i in range(args.iterations + 1):
         if i % args.print_freq == 0:
@@ -450,8 +455,8 @@ def main(args):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--traj", default="trajectories/traj-mixed.pkl")
-    parser.add_argument("--label", default="offline")
+    parser.add_argument("--traj", default="trajectories/traj-25-829-4368-68116.pkl")
+    parser.add_argument("--label", default="default")
     parser.add_argument("--iterations", type=int, default=1000)
     parser.add_argument("--print_freq", type=int, default=10)
     args = parser.parse_args()
