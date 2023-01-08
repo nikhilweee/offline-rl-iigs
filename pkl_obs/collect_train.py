@@ -155,7 +155,7 @@ def main(args):
     logger.info(f"Collected {num_trajs} episodes, {num_steps} steps in total")
 
     with open(
-        f"trajectories/traj-{args.iterations}-{num_info_states}-"
+        f"trajectories/traj-{args.iterations:03d}-{num_info_states}-"
         f"{num_states}-{num_steps}.pkl", "wb"
     ) as f:
         logger.info(f"Saved trajectories to {f.name}")

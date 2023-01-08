@@ -40,7 +40,7 @@ def main():
         if (idx + 1) % 1_000 != 0:
             continue
         print(f'iter {idx+1} states {len(sampler.states)}')
-        with open('trajectories/traj-3937.pkl', 'wb') as f:
+        with open('trajectories/traj-test-3937.pkl', 'wb') as f:
             pickle.dump(sampler.states, f)
         if len(sampler.states) == 3937:
             break

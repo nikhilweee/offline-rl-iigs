@@ -2,7 +2,10 @@
 Train an environment model for Leduc Poker.
 """
 
+import os
+import sys
 import argparse
+import contextlib
 import logging
 import pickle
 
@@ -17,6 +20,20 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname).1s]: %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# https://stackoverflow.com/a/17954769/
+@contextlib.contextmanager
+def silence_stderr(to=os.devnull):
+    stderr_fd = sys.stderr.fileno()
+    orig_fd = os.dup(stderr_fd)
+    null_fd = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(null_fd, stderr_fd)
+    try:
+        yield
+    finally:
+        os.dup2(orig_fd, stderr_fd)
+        os.close(orig_fd)
+        os.close(null_fd)
 
 
 class RNN(nn.Module):
@@ -42,7 +59,15 @@ class RNN(nn.Module):
 
 
 class MLP(nn.Module):
-    def __init__(self, input_size=12, embed_size=32, output_size=6, vocab_size=7, hidden_size=256, device="cpu"):
+    def __init__(
+        self,
+        input_size=12,
+        embed_size=32,
+        output_size=6,
+        vocab_size=7,
+        hidden_size=256,
+        device="cpu",
+    ):
         super().__init__()
         self.embed = nn.Embedding(vocab_size, embed_size, padding_idx=6)
         self.layers = nn.Sequential(
@@ -142,7 +167,9 @@ class EvalDataset(Dataset):
                 next_state_tensor = torch.tensor(
                     next_state_ser[-1], dtype=torch.long, device=self.device
                 )
-                self.dataset.append((state_tensor, state_tensor_len, next_state_tensor))
+                self.dataset.append(
+                    (state_tensor, state_tensor_len, next_state_tensor)
+                )
 
     def __getitem__(self, index):
         return self.dataset[index]
@@ -150,32 +177,47 @@ class EvalDataset(Dataset):
     def __len__(self):
         return len(self.dataset)
 
+
 class Predictor:
-    def __init__(self, model, ckpt_path):
+    def __init__(self, model, ckpt_path, game):
         self.model = model
+        self.game = game
         self.load_ckpt(ckpt_path)
 
     def load_ckpt(self, ckpt_path):
         ckpt = torch.load(ckpt_path)
-        ckpt_model = ckpt['model']
+        ckpt_model = ckpt["model"]
         self.model.load_state_dict(ckpt_model)
-    
-    def predict(self, state, action):
+
+    def next_state(self, state, action):
         state_ser = [
-            int(x)
-            for x in state.serialize()
-            .replace("\n", " ")
-            .strip()
-            .split()
+            int(x) for x in state.serialize().replace("\n", " ").strip().split()
         ]
         state_tensor = torch.tensor(
-            state_ser + [action], dtype=torch.long, device=self.device
+            state_ser + [action], dtype=torch.long, device="cpu"
         )
+        state_tensor = F.pad(state_tensor, (0, 12 - len(state_tensor)), value=6)
         state_tensor_len = torch.tensor(
             len(state_ser) + 1, dtype=torch.long, device="cpu"
         )
-        out = self.model(state_tensor, state_tensor_len)
-        return out
+        pred = self.model(
+            state_tensor.unsqueeze(0), state_tensor_len.unsqueeze(0)
+        )
+
+        _, labels = pred.sort(dim=-1, descending=True)
+
+        for label in labels.squeeze():
+            next_state_ser = state_ser + [label.item()]
+            next_state_str = "\n".join(str(x) for x in next_state_ser) + "\n"
+            # assert state.child(action).serialize() == next_state_str
+            try:
+                with silence_stderr():
+                    next_state = self.game.deserialize_state(next_state_str)
+                break
+            except:
+                continue
+
+        return next_state
 
 
 def main(args):
@@ -189,7 +231,11 @@ def main(args):
 
     logger.info(f"Using Device: {device}")
     writer = SummaryWriter(f"runs/env/{args.label}")
-    model = RNN(device=device)
+
+    if args.model == "mlp":
+        model = MLP(device=device)
+    if args.model == "rnn":
+        model = RNN(device=device)
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
@@ -206,7 +252,7 @@ def main(args):
             loss.backward()
             optimizer.step()
 
-            running_loss = ((running_loss * idx) + loss.item()) / (idx+1)
+            running_loss = ((running_loss * idx) + loss.item()) / (idx + 1)
             writer.step = epoch * len(train_loader) + (idx + 1)
 
             # print statistics
@@ -219,7 +265,7 @@ def main(args):
         nonlocal best_loss
 
         # save checkpoint
-        if (epoch + 1) % 20 == 0 and running_loss < best_loss:
+        if (epoch + 1) % 5 == 0 and running_loss < best_loss:
             best_loss = running_loss
             loss_str = f"{running_loss:.04f}".replace(".", "_")
             checkpoint_path = f"runs/env/{args.label}/model_epoch_{epoch + 1:06d}_loss_{loss_str}.pt"
@@ -255,7 +301,7 @@ def main(args):
         accuracy = correct / total
         writer.add_scalar("accuracy", accuracy, writer.step)
 
-        logger.info(f'accuracy: {accuracy:.04f}')
+        logger.info(f"accuracy: {accuracy:.04f}")
 
     logger.info(f"Starting Training")
     for epoch in range(args.epochs):
@@ -269,16 +315,17 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--train_traj",
-        default="trajectories/traj-10-818-4411-68731.pkl",
+        default="trajectories/traj-010-824-4463-69032.pkl",
         required=False,
     )
     parser.add_argument(
         "--eval_traj",
-        default="trajectories/traj-test-env-3937.pkl",
+        default="trajectories/traj-test-3937.pkl",
         required=False,
     )
     parser.add_argument("--label", default="default")
-    parser.add_argument("--epochs", type=int, default=100_000)
+    parser.add_argument("--model", choices=["mlp", "rnn"], default="rnn")
+    parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--lr", type=float, default=1e-5)
     args = parser.parse_args()
     main(args)

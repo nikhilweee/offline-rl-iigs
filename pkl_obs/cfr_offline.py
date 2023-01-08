@@ -5,14 +5,13 @@ Run CFR on an offline dataset.
 import argparse
 import logging
 import pickle
-import pyspiel
+from collections import defaultdict
 
 import numpy as np
-
-from torch.utils.tensorboard import SummaryWriter
-from collections import defaultdict
+import pyspiel
 from open_spiel.python import policy
 from open_spiel.python.algorithms import cfr, exploitability
+from torch.utils.tensorboard import SummaryWriter
 
 logging.basicConfig(
     format=(
@@ -172,7 +171,7 @@ class OfflineCFRSolver(cfr.CFRSolver):
         self._num_players = game.num_players()
         self._root_node = self._game.new_initial_state()
 
-        states, actions = self._process_trajs(trajs)
+        states, actions = self._extract_trajs(trajs)
         self._current_policy = EmpiricalPolicy(
             game, states=states, actions=actions
         )
@@ -278,7 +277,7 @@ class OfflineCFRSolver(cfr.CFRSolver):
             )
         return
 
-    def _process_trajs(self, trajs):
+    def _extract_trajs(self, trajs):
         """Make a dict of states encountered so far."""
         self.action_freqs = {}
         state_dict = {}
@@ -371,6 +370,8 @@ class OfflineCFRSolver(cfr.CFRSolver):
         else:
             info_state_policy = policies[current_player](info_state)
 
+        assert state.legal_actions() == info_state_node.legal_actions
+
         # all_actions = state.legal_actions()
         # tree_actions = self.action_probs[state_key].keys()
         # missing_actions = set(all_actions) - set(tree_actions)
@@ -441,7 +442,7 @@ def main(args):
 
     game = pyspiel.load_game("leduc_poker", {"players": 2})
     cfr_solver = OfflineCFRSolver(game, trajs)
-    writer = SummaryWriter(f"runs/cfr_offline/{args.label}")
+    writer = SummaryWriter(f"runs/cfr/{args.label}")
 
     for i in range(args.iterations + 1):
         if i % args.print_freq == 0:
@@ -455,9 +456,11 @@ def main(args):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--traj", default="trajectories/traj-mixed.pkl")
+    parser.add_argument(
+        "--traj", default="trajectories/traj-010-824-4463-69032.pkl"
+    )
     parser.add_argument("--label", default="default")
-    parser.add_argument("--iterations", type=int, default=1000)
+    parser.add_argument("--iterations", type=int, default=100)
     parser.add_argument("--print_freq", type=int, default=10)
     args = parser.parse_args()
     return args

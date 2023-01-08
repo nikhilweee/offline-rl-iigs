@@ -3,16 +3,17 @@ Run CFR on an offline dataset.
 """
 
 import argparse
+import copy
 import logging
 import pickle
-import pyspiel
+from collections import defaultdict
 
 import numpy as np
-
-from torch.utils.tensorboard import SummaryWriter
-from collections import defaultdict
+import pyspiel
+from env import MLP, RNN, Predictor
 from open_spiel.python import policy
 from open_spiel.python.algorithms import cfr, exploitability
+from torch.utils.tensorboard import SummaryWriter
 
 logging.basicConfig(
     format=(
@@ -31,7 +32,7 @@ class EmpiricalPolicy(policy.TabularPolicy):
         """Initializes an empirical policy for all players in the game."""
         players = sorted(players or range(game.num_players()))
         super().__init__(game, players)
-
+        # unless otherwise specified, states here refer to info states
         self.game_type = game.get_type()
         self.state_lookup = {}
         self.states_per_player = [[] for _ in range(game.num_players())]
@@ -46,7 +47,7 @@ class EmpiricalPolicy(policy.TabularPolicy):
         empirical_actions_list = []
 
         for player in self.player_ids:
-            for _, state in sorted(states.items(), key=lambda pair: pair[0]):
+            for hist, state in sorted(states.items(), key=lambda pair: pair[0]):
                 if (
                     not state.is_simultaneous_node()
                     and player != state.current_player()
@@ -55,21 +56,22 @@ class EmpiricalPolicy(policy.TabularPolicy):
                 legal_actions = state.legal_actions_mask(player)
                 if not any(legal_actions):
                     continue
-                key = self._state_key(state, player)
-                # Skip adding a duplicate info state node.
-                if key in self.state_lookup:
-                    state_index = self.state_lookup[key]
+                # info_key is an info state and hist is a state
+                info_key = self._state_key(state, player)
+                # skip adding a duplicate info state node.
+                if info_key in self.state_lookup:
+                    state_index = self.state_lookup[info_key]
                     action_counts = empirical_actions_list[state_index]
-                    for action in actions[str(state.history())]:
+                    for action in actions[hist]:
                         action_counts[action] += 1
                 else:
                     state_index = len(legal_actions_list)
-                    self.state_lookup[key] = state_index
+                    self.state_lookup[info_key] = state_index
                     legal_actions_list.append(legal_actions)
-                    self.states_per_player[player].append(key)
+                    self.states_per_player[player].append(info_key)
                     self.states.append(state)
                     action_counts = np.zeros(len(legal_actions))
-                    for action in actions[str(state.history())]:
+                    for action in actions[hist]:
                         action_counts[action] += 1
                     empirical_actions_list.append(action_counts)
                     if self.game_type.provides_information_state_tensor:
@@ -99,7 +101,7 @@ class UniformPolicy(policy.TabularPolicy):
         """Initializes a hybrid policy for all players in the game."""
 
         self._parent_policy = parent_policy
-
+        # unless otherwise specified, states here refer to info states
         self.game = self._parent_policy.game
         self.game_type = self._parent_policy.game_type
         self.player_ids = self._parent_policy.player_ids
@@ -131,29 +133,30 @@ class UniformPolicy(policy.TabularPolicy):
             # States are ordered by their history.
             for _, state in sorted(states.items(), key=lambda pair: pair[0]):
                 if (
-                    state.is_simultaneous_node()
-                    or player == state.current_player()
+                    not state.is_simultaneous_node()
+                    and player != state.current_player()
                 ):
-                    legal_actions = state.legal_actions_mask(player)
-                    if any(legal_actions):
-                        key = self._state_key(state, player)
-                        if key not in self.state_lookup:
-                            state_index = len(legal_actions_list)
-                            self.state_lookup[key] = state_index
-                            legal_actions_list.append(legal_actions)
-                            self.states_per_player[player].append(key)
-                            self.states.append(state)
-                            if self.game_type.provides_information_state_tensor:
-                                state_in_list.append(
-                                    state.information_state_tensor(player)
-                                )
-                            elif self.game_type.provides_observation_tensor:
-                                state_in_list.append(
-                                    state.observation_tensor(player)
-                                )
+                    continue
+                legal_actions = state.legal_actions_mask(player)
+                if not any(legal_actions):
+                    continue
+                key = self._state_key(state, player)
+                if key not in self.state_lookup:
+                    state_index = len(legal_actions_list)
+                    self.state_lookup[key] = state_index
+                    legal_actions_list.append(legal_actions)
+                    self.states_per_player[player].append(key)
+                    self.states.append(state)
+                    if self.game_type.provides_information_state_tensor:
+                        state_in_list.append(
+                            state.information_state_tensor(player)
+                        )
+                    elif self.game_type.provides_observation_tensor:
+                        state_in_list.append(state.observation_tensor(player))
 
-        # Put legal action masks in a numpy array and create the uniform random
-        # policy.
+        # Put legal action masks in a numpy array and
+        # create the uniform random policy.
+
         self.state_in = None
         if state_in_list:
             self.state_in = np.array(state_in_list)
@@ -167,22 +170,23 @@ class UniformPolicy(policy.TabularPolicy):
 
 
 class OfflineCFRSolver(cfr.CFRSolver):
-    def __init__(self, game, trajs):
+    def __init__(self, game, trajs, model, env_ckpt):
+        # cannot call super().__init__(game) because that creates a tabular
+        # policy using the actual game states and doesn't use collected trajs
         self._game = game
         self._num_players = game.num_players()
         self._root_node = self._game.new_initial_state()
 
-        states, actions = self._process_trajs(trajs)
-        self._current_policy = EmpiricalPolicy(
-            game, states=states, actions=actions
-        )
+        # states, actions = self._extract_trajs(trajs)
+        self._current_policy = EmpiricalPolicy(game, states={}, actions={})
         self._average_policy = UniformPolicy(self._current_policy)
+        self._current_policy = copy.copy(self._average_policy)
 
         # Make a dict of ALL info state nodes.
         # Each info state has a list of legal actions
         # and its index in the tabular policy array.
         self._info_state_nodes = {}
-        self._initialize_info_state_nodes(self._root_node)
+        self._initialize_info_state_nodes()
         logger.info(f"info_state_nodes: {len(self._info_state_nodes)}")
 
         self._iteration = 0
@@ -190,95 +194,23 @@ class OfflineCFRSolver(cfr.CFRSolver):
         self._alternating_updates = True
         self._regret_matching_plus = False
 
-    def _get_infostate_policy(self, info_state_str):
-        """Returns an {action: prob} dictionary for the policy on `info_state`."""
-        info_state_node = self._info_state_nodes[info_state_str]
-        prob_vec = self._current_policy.action_probability_array[
-            info_state_node.index_in_tabular_policy
-        ]
-        return {
-            action: prob_vec[action] for action in info_state_node.legal_actions
-        }
+        if model == "rnn":
+            pred_model = RNN()
+        if model == "mlp":
+            pred_model = MLP()
 
-    def _initialize_info_state_nodes(self, state):
+        self.predictor = Predictor(pred_model, env_ckpt, game)
 
-        if state.is_terminal():
-            return
-
-        state_key = str(state.history())
-        if state.is_chance_node():
-            for action in self.action_probs[state_key].keys():
-                self._initialize_info_state_nodes(state.child(action))
-            return
-
-        current_player = state.current_player()
-        info_state = state.information_state_string(current_player)
-
-        info_state_node = self._info_state_nodes.get(info_state)
-        if info_state_node is None:
-            legal_actions = state.legal_actions(current_player)
+    def _initialize_info_state_nodes(self):
+        for info_state, index in self._average_policy.state_lookup.items():
+            legal_mask = self._average_policy.legal_actions_mask[index]
+            legal_actions = [x for x in [0, 1, 2] if legal_mask[x] == 1]
             info_state_node = cfr._InfoStateNode(
-                legal_actions=legal_actions,
-                index_in_tabular_policy=self._current_policy.state_lookup[
-                    info_state
-                ],
+                legal_actions=legal_actions, index_in_tabular_policy=index
             )
             self._info_state_nodes[info_state] = info_state_node
 
-        for action in self.action_probs[state_key].keys():
-            self._initialize_info_state_nodes(state.child(action))
-
-    def _log_estimate(self, action_prob, estimate):
-        if not estimate:
-            self.missing_state_count += 1
-            logger.info(
-                f"estimate: {estimate} actual: "
-                f"{action_prob:06.4f} diff: {estimate}"
-            )
-        else:
-            self.found_state_count += 1
-            diff = estimate - action_prob
-            logger.info(
-                f"estimate: {estimate:06.4f} actual: "
-                f"{action_prob:06.4f} diff: {diff: 06.4f}"
-            )
-
-    def _set_action_prob(self, state_key, action, prob):
-        if state_key not in self.action_probs:
-            self.action_probs[state_key] = {action: prob}
-        else:
-            self.action_probs[state_key][action] = prob
-
-    def _reset_action_probs(self, state):
-        key = str(state.history())
-        if state.is_terminal():
-            if key in self.action_probs:
-                self.found_state_count += 1
-        if state.is_chance_node():
-            for action, action_prob in state.chance_outcomes():
-                estimate = self.action_probs.get(key, {}).get(action, None)
-                self._log_estimate(action_prob, estimate)
-                self._set_action_prob(key, action, action_prob)
-                new_state = state.child(action)
-                self._reset_action_probs(new_state)
-        if state.is_player_node():
-            action_sum = len(state.legal_actions())
-            for action in state.legal_actions():
-                action_prob = 1 / action_sum
-                estimate = self.action_probs.get(key, {}).get(action, None)
-                self._log_estimate(action_prob, estimate)
-                self._set_action_prob(key, action, action_prob)
-                new_state = state.child(action)
-                self._reset_action_probs(new_state)
-        if state.is_initial_state():
-            self.found_state_count += 1
-            logger.info(
-                f"{self.missing_state_count} states missing, "
-                f"{self.found_state_count} found."
-            )
-        return
-
-    def _process_trajs(self, trajs):
+    def _extract_trajs(self, trajs):
         """Make a dict of states encountered so far."""
         self.action_freqs = {}
         state_dict = {}
@@ -293,7 +225,7 @@ class OfflineCFRSolver(cfr.CFRSolver):
                 # Update action frequencies. This is used for CFR
                 if key not in self.action_freqs:
                     self.action_freqs[key] = {action: 1}
-                if action not in self.action_freqs[key]:
+                elif action not in self.action_freqs[key]:
                     self.action_freqs[key][action] = 1
                 else:
                     self.action_freqs[key][action] += 1
@@ -324,24 +256,12 @@ class OfflineCFRSolver(cfr.CFRSolver):
         if state.is_terminal():
             return np.asarray(state.returns())
 
-        state_key = str(state.history())
-
         if state.is_chance_node():
-
-            # the default value for unexplored nodes is zero
             state_value = 0.0
-
-            # all_actions, _ = zip(*state.chance_outcomes())
-            # tree_actions = self.action_probs[state_key].keys()
-            # missing_actions = set(all_actions) - set(tree_actions)
-            # if missing_actions:
-            #     logger.info(f'{state_key}: {missing_actions}')
-
-            # TODO: Change these lines to switch to online
-            # for action, action_prob in state.chance_outcomes():
-            for action, action_prob in self.action_probs[state_key].items():
+            for action, action_prob in state.chance_outcomes():
                 assert action_prob > 0
-                new_state = state.child(action)
+                # new_state = state.child(action)
+                new_state = self.predictor.next_state(state, action)
                 new_reach_probabilities = reach_probabilities.copy()
                 new_reach_probabilities[-1] *= action_prob
                 state_value += (
@@ -355,14 +275,20 @@ class OfflineCFRSolver(cfr.CFRSolver):
         current_player = state.current_player()
         info_state = state.information_state_string(current_player)
 
-        # Comments stripped for brevity
+        # No need to continue on this history branch as no update will be performed
+        # for any player.
+        # The value we return here is not used in practice. If the conditional
+        # statement is True, then the last taken action has probability 0 of
+        # occurring, so the returned value is not impacting the parent node value.
         if all(reach_probabilities[:-1] == 0):
             return np.zeros(self._num_players)
 
-        # again, default for unexplored nodes is zero
         state_value = np.zeros(self._num_players)
 
-        # Commentes stripped for brevity
+        # The utilities of the children states are computed recursively. As the
+        # regrets are added to the information state regrets for each state in that
+        # information state, the recursive call can only be made once per child
+        # state. Therefore, the utilities are cached.
         children_utilities = {}
 
         info_state_node = self._info_state_nodes[info_state]
@@ -371,17 +297,12 @@ class OfflineCFRSolver(cfr.CFRSolver):
         else:
             info_state_policy = policies[current_player](info_state)
 
-        # all_actions = state.legal_actions()
-        # tree_actions = self.action_probs[state_key].keys()
-        # missing_actions = set(all_actions) - set(tree_actions)
-        # if missing_actions:
-        #     logger.info(f'{state_key}: {missing_actions}')
+        assert state.legal_actions() == info_state_node.legal_actions
 
-        # TODO: Change these lines to switch to online
-        # for action in state.legal_actions():
-        for action in self.action_probs[state_key].keys():
+        for action in state.legal_actions():
             action_prob = info_state_policy.get(action, 0.0)
-            new_state = state.child(action)
+            # new_state = state.child(action)
+            new_state = self.predictor.next_state(state, action)
             new_reach_probabilities = reach_probabilities.copy()
             new_reach_probabilities[current_player] *= action_prob
             child_utility = self._compute_counterfactual_regret_for_player(
@@ -404,17 +325,7 @@ class OfflineCFRSolver(cfr.CFRSolver):
         ) * np.prod(reach_probabilities[current_player + 1 :])
         state_value_for_player = state_value[current_player]
 
-        # all_actions = info_state_policy.keys()
-        # tree_actions = self.action_probs[state_key].keys()
-        # missing_actions = set(all_actions) - set(tree_actions)
-        # if missing_actions:
-        #     logger.info(f'{state_key}: {missing_actions}')
-
-        # TODO: Change these lines to switch to online
-        # this is essentially state.legal_actions()
-        # for action in info_state_policy.keys():
-        for action in self.action_probs[state_key].keys():
-            action_prob = info_state_policy.get(action)
+        for action, action_prob in info_state_policy.items():
             cfr_regret = counterfactual_reach_prob * (
                 children_utilities[action][current_player]
                 - state_value_for_player
@@ -440,8 +351,8 @@ def main(args):
     logger.info(f"Loaded dataset : {args.traj}")
 
     game = pyspiel.load_game("leduc_poker", {"players": 2})
-    cfr_solver = OfflineCFRSolver(game, trajs)
-    writer = SummaryWriter(f"runs/cfr_offline/{args.label}")
+    cfr_solver = OfflineCFRSolver(game, trajs, args.model, args.env_ckpt)
+    writer = SummaryWriter(f"runs/cfr_env/{args.label}")
 
     for i in range(args.iterations + 1):
         if i % args.print_freq == 0:
@@ -455,9 +366,15 @@ def main(args):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--traj", default="trajectories/traj-25-829-4368-68116.pkl")
+    parser.add_argument(
+        "--traj", default="trajectories/traj-010-824-4463-69032.pkl"
+    )
+    parser.add_argument(
+        "--env_ckpt", default="runs/env/rnn/model_epoch_000100_loss_1_0440.pt"
+    )
     parser.add_argument("--label", default="default")
-    parser.add_argument("--iterations", type=int, default=1000)
+    parser.add_argument("--model", choices=["mlp", "rnn"], default="rnn")
+    parser.add_argument("--iterations", type=int, default=100)
     parser.add_argument("--print_freq", type=int, default=10)
     args = parser.parse_args()
     return args
