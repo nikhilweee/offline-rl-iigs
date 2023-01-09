@@ -5,6 +5,7 @@ oef/
 open_spiel
 ray
 d3rlpy_logs/
+runs_archive/
 __pycache__/
 .ipynb_checkpoints/
 .vscode/

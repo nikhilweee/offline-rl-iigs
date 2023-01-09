@@ -442,7 +442,7 @@ def main(args):
 
     game = pyspiel.load_game("leduc_poker", {"players": 2})
     cfr_solver = OfflineCFRSolver(game, trajs)
-    writer = SummaryWriter(f"runs/cfr/{args.label}")
+    writer = SummaryWriter(f"runs/cfr_offline/{args.label}")
 
     for i in range(args.iterations + 1):
         if i % args.print_freq == 0:
@@ -460,7 +460,7 @@ def parse_args():
         "--traj", default="trajectories/traj-010-824-4463-69032.pkl"
     )
     parser.add_argument("--label", default="default")
-    parser.add_argument("--iterations", type=int, default=100)
+    parser.add_argument("--iterations", type=int, default=500)
     parser.add_argument("--print_freq", type=int, default=10)
     args = parser.parse_args()
     return args

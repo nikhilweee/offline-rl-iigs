@@ -32,8 +32,6 @@ class MLP(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_size, hidden_size),
             nn.ReLU(),
-            nn.Linear(hidden_size, hidden_size),
-            nn.ReLU(),
             nn.Linear(hidden_size, output_size),
         )
         self.to(device)
@@ -123,7 +121,7 @@ if __name__ == "__main__":
         "--traj", default="trajectories/traj-010-824-4463-69032.pkl"
     )
     parser.add_argument("--label", default="default")
-    parser.add_argument("--epochs", type=int, default=500)
+    parser.add_argument("--epochs", type=int, default=1000)
     parser.add_argument("--lr", type=float, default=1e-5)
     args = parser.parse_args()
     main(args)
