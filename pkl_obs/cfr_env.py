@@ -352,7 +352,7 @@ def main(args):
 
     game = pyspiel.load_game("leduc_poker", {"players": 2})
     cfr_solver = OfflineCFRSolver(game, trajs, args.model, args.env_ckpt)
-    writer = SummaryWriter(f"runs/cfr_env/{args.label}")
+    writer = SummaryWriter(f"runs/cfr_env/{args.model}/{args.label}")
 
     for i in range(args.iterations + 1):
         if i % args.print_freq == 0:

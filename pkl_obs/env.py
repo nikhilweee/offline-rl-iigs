@@ -230,7 +230,7 @@ def main(args):
     eval_loader = DataLoader(eval_dataset, batch_size=1024, shuffle=True)
 
     logger.info(f"Using Device: {device}")
-    writer = SummaryWriter(f"runs/env/{args.label}")
+    writer = SummaryWriter(f"runs/env/{args.model}/{args.label}")
 
     if args.model == "mlp":
         model = MLP(device=device)
@@ -253,10 +253,10 @@ def main(args):
             optimizer.step()
 
             running_loss = ((running_loss * idx) + loss.item()) / (idx + 1)
-            writer.step = epoch * len(train_loader) + (idx + 1)
 
             # print statistics
-            writer.add_scalar("loss", running_loss, writer.step)
+        writer.step = epoch + 1
+        writer.add_scalar("loss", running_loss, writer.step)
         logger.info(
             f"epoch: {epoch + 1:02d} batch: {idx + 1:03d} loss: {running_loss:.04f}"
         )
@@ -265,10 +265,10 @@ def main(args):
         nonlocal best_loss
 
         # save checkpoint
-        if (epoch + 1) % 5 == 0 and running_loss < best_loss:
+        if (epoch + 1) in [1, 2, 3, 4, 5, 10, 25, 50, 100, 150, 200]:
             best_loss = running_loss
             loss_str = f"{running_loss:.04f}".replace(".", "_")
-            checkpoint_path = f"runs/env/{args.label}/model_epoch_{epoch + 1:06d}_loss_{loss_str}.pt"
+            checkpoint_path = f"runs/env/{args.model}/{args.label}/model_epoch_{epoch + 1:03d}_loss_{loss_str}.pt"
             logger.info(f"saving model: {checkpoint_path}")
             torch.save(
                 {
@@ -283,11 +283,11 @@ def main(args):
 
         return None
 
-    def eval_ckpt(epoch, ckpt_path):
-        logger.info(f"loading model: {ckpt_path}")
-        ckpt = torch.load(ckpt_path)
-        model.load_state_dict(ckpt["model"])
-        optimizer.load_state_dict(ckpt["optimizer"])
+    def eval_ckpt(ckpt_path):
+        # logger.info(f"loading model: {ckpt_path}")
+        # ckpt = torch.load(ckpt_path)
+        # model.load_state_dict(ckpt["model"])
+        # optimizer.load_state_dict(ckpt["optimizer"])
         model.eval()
 
         correct, total = 0, 0
@@ -306,9 +306,7 @@ def main(args):
     logger.info(f"Starting Training")
     for epoch in range(args.epochs):
         ckpt_path = train_epoch(epoch)
-        if not ckpt_path:
-            continue
-        eval_ckpt(epoch, ckpt_path)
+        eval_ckpt(ckpt_path)
 
 
 if __name__ == "__main__":
@@ -325,7 +323,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--label", default="default")
     parser.add_argument("--model", choices=["mlp", "rnn"], default="rnn")
-    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--lr", type=float, default=1e-5)
     args = parser.parse_args()
     main(args)
